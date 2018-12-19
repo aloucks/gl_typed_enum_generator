@@ -1,0 +1,10 @@
+[package]
+name = "gl-typed"
+version = "0.1.0"
+authors = ["Aaron Loucks <aloucks@cofront.net>"]
+edition = "2015"
+
+[dependencies]
+
+[dev-dependencies]
+gl_generator = { git = "https://github.com/aloucks/gl-rs.git", branch = "enum_groups", features = ["unstable_generator_utils"] }
