@@ -1,7 +1,5 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+extern crate gl_generator;
+
+mod struct_gen;
+
+pub use struct_gen::StructGenerator;

@@ -1,10 +1,9 @@
 [package]
-name = "gl-typed"
+name = "gl_typed_enum_generator"
 version = "0.1.0"
 authors = ["Aaron Loucks <aloucks@cofront.net>"]
+repository = "https://github.com/aloucks/gl_typed_enum_generator.git"
 edition = "2015"
 
 [dependencies]
-
-[dev-dependencies]
 gl_generator = { git = "https://github.com/aloucks/gl-rs.git", branch = "enum_groups", features = ["unstable_generator_utils"] }

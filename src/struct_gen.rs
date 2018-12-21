@@ -8,11 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// WITHdest WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use gl_generator::Registry;
+use gl_generator::{Registry, Cmd};
 use gl_generator::generators;
 
 use std::io;
@@ -32,6 +32,7 @@ impl generators::Generator for StructGenerator {
         try!(write_panicking_fns(registry, dest));
         try!(write_struct(registry, dest));
         try!(write_impl(registry, dest));
+        try!(write_enum_groups(registry, dest));
         Ok(())
     }
 }
@@ -166,7 +167,7 @@ where
         if let Some(v) = registry.aliases.get(&cmd.proto.ident) {
             try!(writeln!(dest, "/// Fallbacks: {}", v.join(", ")));
         }
-        try!(writeln!(dest, "pub {name}: FnPtr,", name = cmd.proto.ident));
+        try!(writeln!(dest, "pub _{name}: FnPtr,", name = cmd.proto.ident));
     }
     try!(writeln!(dest, "_priv: ()"));
 
@@ -205,13 +206,19 @@ where
                 let mut metaloadfn = |symbol: &'static str, symbols: &[&'static str]| {{
                     do_metaloadfn(&mut loadfn, symbol, symbols)
                 }};
+                {api}::load_with_metaloadfn(&mut metaloadfn)
+            }}
+
+            #[inline(never)]
+            fn load_with_metaloadfn(metaloadfn: &mut FnMut(&'static str, &[&'static str]) -> *const __gl_imports::raw::c_void) -> {api} {{
+                
                 {api} {{",
                   api = generators::gen_struct_name(registry.api)));
 
     for cmd in &registry.cmds {
         try!(writeln!(
             dest,
-            "{name}: FnPtr::new(metaloadfn(\"{symbol}\", &[{fallbacks}])),",
+            "_{name}: FnPtr::new(metaloadfn(\"{symbol}\", &[{fallbacks}])),",
             name = cmd.proto.ident,
             symbol = generators::gen_symbol_name(registry.api, &cmd.proto.ident),
             fallbacks = match registry.aliases.get(&cmd.proto.ident) {
@@ -238,13 +245,13 @@ where
             "#[allow(non_snake_case, unused_variables, dead_code)]
             #[inline] pub unsafe fn {name}(&self, {params}) -> {return_suffix} {{ \
                 __gl_imports::mem::transmute::<_, extern \"system\" fn({typed_params}) -> {return_suffix}>\
-                    (self.{name}.f)({idents}) \
+                    (self._{name}.f)({idents}) \
             }}",
             name = cmd.proto.ident,
-            params = generators::gen_parameters(cmd, true, true).join(", "),
-            typed_params = generators::gen_parameters(cmd, false, true).join(", "),
+            params = gen_parameters(cmd, &registry, true, true).join(", "),
+            typed_params = gen_parameters(cmd, &registry, false, true).join(", "),
             return_suffix = cmd.proto.ty,
-            idents = generators::gen_parameters(cmd, true, false).join(", "),
+            idents = gen_parameters(cmd, &registry, true, false).join(", "),
         ))
     }
 
@@ -255,4 +262,121 @@ where
         unsafe impl __gl_imports::Send for {api} {{}}",
         api = generators::gen_struct_name(registry.api)
     )
+}
+
+fn write_enum_groups<W>(registry: &Registry, dest: &mut W) -> io::Result<()>
+    where W: io::Write
+{
+    writeln!(dest, "macro_rules! impl_enum_traits {{
+        ($Name:ident) => {{
+
+        }}
+    }}")?;
+    writeln!(dest, "")?;
+
+    writeln!(dest, "macro_rules! impl_enum_bitmask_traits {{
+        ($Name:ident) => {{
+            
+        }}
+    }}")?;
+    writeln!(dest, "")?;
+
+    let mut enums = ::std::collections::HashSet::new();
+
+    for en in registry.enums.iter() {
+        enums.insert(en.ident.as_str());
+    }
+
+    writeln!(dest, "pub mod enums {{")?;
+
+    // NOTE: unreachable_patterns is allowed due to enum aliases
+    writeln!(dest, "#![allow(non_camel_case_types, non_upper_case_globals, non_snake_case, dead_code, unreachable_patterns)]")?;
+
+    writeln!(dest, "")?;
+    writeln!(dest, "use super::types;")?;
+    writeln!(dest, "")?;
+
+    for (_, group) in registry.groups.iter() {
+
+        let enum_type = if group.ident == "Boolean" {
+            "types::GLboolean"
+        } else {
+            "types::GLenum"
+        };
+
+        writeln!(dest, "#[repr(transparent)]")?;
+        writeln!(dest, "#[derive(Copy, Clone, PartialEq, Eq, Hash)]")?;
+        writeln!(dest, "pub struct {}(pub {});", group.ident, enum_type)?;
+        writeln!(dest, "")?;
+        writeln!(dest, "impl {} {{", group.ident)?;
+
+        let mut group_enums = ::std::collections::HashSet::new();
+
+        for enum_name in group.enums.iter() {
+            let unique = group_enums.insert(enum_name.as_str());
+            if unique && enums.contains(enum_name.as_str()) {
+                writeln!(dest, "    pub const {enum_name}: {group_name} = {group_name}(super::{enum_name});", 
+                    group_name = group.ident, enum_name = enum_name)?;
+            }
+        }
+        
+        if let Some("bitmask") = group.enums_type.as_ref().map(|t| t.as_str()) {
+            writeln!(dest, "    pub const Empty: {group_name} = {group_name}(0);", 
+                group_name = group.ident)?;
+        }
+
+        writeln!(dest, "}}")?;
+        writeln!(dest, "")?;
+
+        writeln!(dest, "impl ::std::fmt::Debug for {} {{", group.ident)?;
+        writeln!(dest, "    fn fmt(&self, fmt: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {{")?;
+        writeln!(dest, "        match *self {{")?;
+        for enum_name in group_enums.iter() {
+            if enums.contains(enum_name) {
+                writeln!(dest, "            {group_name}::{enum_name} => write!(fmt, \"{group_name}({enum_name})\"),", 
+                    group_name = group.ident, enum_name = enum_name)?;
+            }
+        }
+        writeln!(dest, "            _ => write!(fmt, \"{group_name}({{}})\", self.0),", group_name = group.ident)?;
+        writeln!(dest, "        }}")?;
+        writeln!(dest, "    }}")?;
+        writeln!(dest, "}}")?;
+        writeln!(dest, "")?;
+
+        writeln!(dest, "impl_enum_traits!({});", group.ident)?;
+        writeln!(dest, "")?;
+
+        if let Some("bitmask") = group.enums_type.as_ref().map(|t| t.as_str()) {
+            writeln!(dest, "impl_enum_bitmask_traits!({});", group.ident)?;
+            writeln!(dest, "")?;
+        }
+    }
+    
+    writeln!(dest, "}}")?;
+
+    Ok(())
+}
+
+/// Generates the list of Rust `Arg`s that a `Cmd` requires.
+pub fn gen_parameters(cmd: &Cmd, registry: &Registry, with_idents: bool, with_types: bool) -> Vec<String> {
+    cmd.params
+        .iter()
+        .map(|binding| {
+            let ty = binding.group
+                .as_ref()
+                .and_then(|group| registry.groups.get(group).map(|group| format!("enums::{}", group.ident)))
+                .unwrap_or(binding.ty.to_string());
+
+            // returning
+            if with_idents && with_types {
+                format!("{}: {}", binding.ident, ty)
+            } else if with_types {
+                format!("{}", ty)
+            } else if with_idents {
+                format!("{}", binding.ident)
+            } else {
+                panic!()
+            }
+        })
+        .collect()
 }
