@@ -159,7 +159,7 @@ where
         "
         #[allow(non_camel_case_types, non_snake_case, dead_code)]
         #[derive(Clone)]
-        pub struct {api} {{",
+        pub struct {api}FnPtrs {{",
         api = generators::gen_struct_name(registry.api)
     ));
 
@@ -167,11 +167,28 @@ where
         if let Some(v) = registry.aliases.get(&cmd.proto.ident) {
             try!(writeln!(dest, "/// Fallbacks: {}", v.join(", ")));
         }
-        try!(writeln!(dest, "pub _{name}: FnPtr,", name = cmd.proto.ident));
+        try!(writeln!(dest, "pub {name}: FnPtr,", name = cmd.proto.ident));
     }
-    try!(writeln!(dest, "_priv: ()"));
+    //try!(writeln!(dest, "_priv: ()"));
 
-    writeln!(dest, "}}")
+    writeln!(dest, "}}")?;
+
+    writeln!(dest, "")?;
+
+    writeln!(
+        dest,
+        "
+        #[allow(non_camel_case_types, non_snake_case, dead_code)]
+        #[derive(Clone)]
+        pub struct {api} {{
+            pub ptrs: {api}FnPtrs,
+            _priv: (),
+        }}
+        ",
+        api = generators::gen_struct_name(registry.api)
+    )?;
+
+    Ok(())
 }
 
 /// Creates the `impl` of the structure created by `write_struct`.
@@ -212,13 +229,14 @@ where
             #[inline(never)]
             fn load_with_metaloadfn(metaloadfn: &mut FnMut(&'static str, &[&'static str]) -> *const __gl_imports::raw::c_void) -> {api} {{
                 
-                {api} {{",
+                {api} {{
+                    ptrs: {api}FnPtrs {{",
                   api = generators::gen_struct_name(registry.api)));
 
     for cmd in &registry.cmds {
         try!(writeln!(
             dest,
-            "_{name}: FnPtr::new(metaloadfn(\"{symbol}\", &[{fallbacks}])),",
+            "{name}: FnPtr::new(metaloadfn(\"{symbol}\", &[{fallbacks}])),",
             name = cmd.proto.ident,
             symbol = generators::gen_symbol_name(registry.api, &cmd.proto.ident),
             fallbacks = match registry.aliases.get(&cmd.proto.ident) {
@@ -231,6 +249,8 @@ where
             },
         ))
     }
+
+    writeln!(dest, "}},")?;
 
     try!(writeln!(dest, "_priv: ()"));
 
@@ -245,7 +265,7 @@ where
             "#[allow(non_snake_case, unused_variables, dead_code)]
             #[inline] pub unsafe fn {name}(&self, {params}) -> {return_suffix} {{ \
                 __gl_imports::mem::transmute::<_, extern \"system\" fn({typed_params}) -> {return_suffix}>\
-                    (self._{name}.f)({idents}) \
+                    (self.ptrs.{name}.f)({idents}) \
             }}",
             name = cmd.proto.ident,
             params = gen_parameters(cmd, &registry, true, true).join(", "),
