@@ -301,7 +301,7 @@ fn write_enum_groups<W>(registry: &Registry, dest: &mut W) -> io::Result<()>
     }}")?;
     writeln!(dest, "")?;
 
-    let mut enums = ::std::collections::HashSet::new();
+    let mut enums = ::std::collections::BTreeSet::new();
 
     for en in registry.enums.iter() {
         enums.insert(en.ident.as_str());
@@ -325,12 +325,12 @@ fn write_enum_groups<W>(registry: &Registry, dest: &mut W) -> io::Result<()>
         };
 
         writeln!(dest, "#[repr(transparent)]")?;
-        writeln!(dest, "#[derive(Copy, Clone, PartialEq, Eq, Hash)]")?;
+        writeln!(dest, "#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]")?;
         writeln!(dest, "pub struct {}(pub {});", group.ident, enum_type)?;
         writeln!(dest, "")?;
         writeln!(dest, "impl {} {{", group.ident)?;
 
-        let mut group_enums = ::std::collections::HashSet::new();
+        let mut group_enums = ::std::collections::BTreeSet::new();
 
         for enum_name in group.enums.iter() {
             let unique = group_enums.insert(enum_name.as_str());
@@ -384,7 +384,13 @@ pub fn gen_parameters(cmd: &Cmd, registry: &Registry, with_idents: bool, with_ty
         .map(|binding| {
             let ty = binding.group
                 .as_ref()
-                .and_then(|group| registry.groups.get(group).map(|group| format!("enums::{}", group.ident)))
+                .and_then(|group| registry.groups.get(group).map(|group| {
+                    if let Some(index) = binding.ty.rfind(' ') {
+                        format!("{} enums::{}", &binding.ty[0..index], group.ident)
+                    } else {
+                        format!("enums::{}", group.ident)
+                    }
+                }))
                 .unwrap_or(binding.ty.to_string());
 
             // returning
